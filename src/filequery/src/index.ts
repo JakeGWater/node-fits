@@ -43,7 +43,7 @@ class NArray<T> {
     }
 }
 
-type Frame = [string, string][]
+type Frame = string[][]
 
 abstract class Process {
     protected abstract process_frame(frame: Frame): Frame
@@ -139,6 +139,106 @@ class ProcessUnion {
     }
 }
 
+function SIZE(frame: Frame) {
+    return [frame.length, frame[0].length]
+}
+
+class ProcessTabels {
+    Process(frame: Frame): Frame[] {
+        let [height, width] = SIZE(frame)
+        let na = new NArray(height, width, false)
+        let ranges: any[] = []
+        for (let j = 0; j < width; j++) {
+            for (let i = 0; i < height; i++) {
+                if (na.Get(j, i)) {
+                    // console.log(`Skipping ${i}, ${j}`)
+                    continue
+                } else {
+                    // console.log(`Checking ${i}, ${j}`)
+                }
+
+                let cell = frame[i][j]
+                if (cell) {
+                    // console.log(`Section Start ${i}, ${j} - ${cell.value}`)
+                    // this is the start of a section!!!
+                    let ti = i // row
+                    let tj = j // col
+                    let tj_max = j
+                    let row_empty = false
+
+                    search: while (true) {
+                        // stop if we run out of rows
+                        if (ti >= height) {
+                            break search
+                        }
+
+                        // next line if we run out of columns
+                        if (tj >= width) {
+                            // stop tho if this row is empty
+                            if (row_empty) {
+                                break search
+                            }
+
+                            tj = j // reset back to start
+                            ti++ // move to next row
+
+                            row_empty = true
+                            continue
+                        }
+
+                        let tcell = frame[ti][tj]
+                        na.Set(tj, ti, true)
+
+                        // if the cell has something, advance to the right and increase the max
+                        if (tcell) {
+                            row_empty = false
+                            tj++
+                            tj_max = Math.max(tj, tj_max)
+                        }
+                        // if the cell is empty, but we're less than the max, keep going right
+                        else if (tj < tj_max) {
+                            tj++
+                        }
+                        // otherwise go to the next row
+                        else {
+                            // stop tho if this row is empty
+                            if (row_empty) {
+                                break search
+                            }
+
+                            tj = j
+                            ti++
+
+                            row_empty = true
+                        }
+                    }
+
+                    ranges.push({ head: [i, j], tail: [ti, tj_max] })
+                }
+            }
+        }
+
+        let frames: Frame[] = []
+        for (let range of ranges) {
+            let [hi, hj] = range.head
+            let [ti, tj] = range.tail
+            let out: any[] = []
+            for (let i = hi; i < ti; i++) {
+                let key = frame[i][hj]
+                let vals: any = []
+                for (let j = hj; j < tj - 1; j++) {
+                    vals.push(frame[i][j + 1])
+                }
+                out.push([key, ...vals])
+            }
+            frames.push(out)
+        }
+
+        return frames
+    }
+}
+
+
 class FormatCsv {
     Format(frames: Frame[]): string {
         let out = [
@@ -163,95 +263,17 @@ async function main(filename: string) {
 
     console.log(`Seaching for frames across ${sheet.rowCount} rows and ${sheet.columnCount} columns`)
 
-    // Find Contiguous Tables within the Sheet
-    // Tables are surrounded by empty cells on all sides.
-    let ranges: any[] = []
-    for (let j = 0; j < sheet.columnCount; j++) {
-        for (let i = 0; i < sheet.rowCount; i++) {
-            if (na.Get(j, i)) {
-                // console.log(`Skipping ${i}, ${j}`)
-                continue
-            } else {
-                // console.log(`Checking ${i}, ${j}`)
-            }
-
+    let fframe: Frame = []
+    for (let i = 0; i < sheet.rowCount; i++) {
+        let frow: string[] = []
+        for (let j = 0; j < sheet.columnCount; j++) {
             let cell = sheet.getCell(i + 1, j + 1)
-            if (cell.value) {
-                // console.log(`Section Start ${i}, ${j} - ${cell.value}`)
-                // this is the start of a section!!!
-                let ti = i // row
-                let tj = j // col
-                let tj_max = j
-                let row_empty = false
-
-                search: while (true) {
-                    // stop if we run out of rows
-                    if (ti >= sheet.rowCount) {
-                        break search
-                    }
-
-                    // next line if we run out of columns
-                    if (tj >= sheet.columnCount) {
-                        // stop tho if this row is empty
-                        if (row_empty) {
-                            break search
-                        }
-
-                        tj = j // reset back to start
-                        ti++ // move to next row
-
-                        row_empty = true
-                        continue
-                    }
-
-                    let tcell = sheet.getCell(ti + 1, tj + 1)
-                    na.Set(tj, ti, true)
-
-                    // if the cell has something, advance to the right and increase the max
-                    if (tcell.text) {
-                        row_empty = false
-                        tj++
-                        tj_max = Math.max(tj, tj_max)
-                    }
-                    // if the cell is empty, but we're less than the max, keep going right
-                    else if (tj < tj_max) {
-                        tj++
-                    }
-                    // otherwise go to the next row
-                    else {
-                        // stop tho if this row is empty
-                        if (row_empty) {
-                            break search
-                        }
-
-                        tj = j
-                        ti++
-
-                        row_empty = true
-                    }
-                }
-
-                ranges.push({ head: [i, j], tail: [ti, tj_max] })
-            }
+            frow.push(cell.text)
         }
+        fframe.push(frow)
     }
 
-    // Extract Frames from Sheet
-    let frames: Frame[] = []
-    for (let frame of ranges) {
-        let [hi, hj] = frame.head
-        let [ti, tj] = frame.tail
-        let out: any[] = []
-        for (let i = hi; i < ti; i++) {
-            let key = sheet.getCell(i + 1, hj + 1).text
-            let vals: any = []
-            for (let j = hj; j < tj - 1; j++) {
-                vals.push(sheet.getCell(i + 1, j + 2).text)
-            }
-            out.push([key, ...vals])
-        }
-        frames.push(out)
-    }
+    let frames = new ProcessTabels().Process(fframe)
 
     // Process Columns
     // We assume the leftmost column is the key, and the rest are values
@@ -265,9 +287,10 @@ async function main(filename: string) {
     // Empty columns will be the empty string
     frames = new ProcessUnion().Process(frames)
 
-    // Format Frames
+    // Format Frames to CSV
+    // There is no safeguard to ensure the frames have the same columns in the same order
+    // You should send this through a ProcessUnion first
     console.log(new FormatCsv().Format(frames))
 }
 
 main(args[0])
-
