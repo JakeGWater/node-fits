@@ -1,16 +1,5 @@
 import { Workbook, Cell } from 'exceljs'
 
-import yargs from 'yargs'
-
-const argv = yargs
-    .option('file', {
-        alias: 'f',
-        description: 'The file to query',
-        type: 'string',
-    })
-    .help()
-    .alias('help', 'h').argv
-
 function CHECK(any: any, message = 'CHECK FAILED'): asserts any {
     if (!any) {
         throw new Error(message)
@@ -87,8 +76,40 @@ class ProcessHeader extends Process {
     }
 }
 
-class ProcessUnion {
+class ProcessColumns {
     constructor() { }
+    Process(frames: Frame[]): Frame[] {
+        let out_frames: Frame[] = []
+
+        for (let frame of frames) {
+            let frame_first_row = frame[0]
+            if (frame_first_row.length === 2) {
+                out_frames.push(frame)
+            } else {
+                for (let i = 1; i < frame_first_row.length; i++) {
+                    let out_frame: Frame = []
+                    for (let row of frame) {
+                        out_frame.push([row[0], row[i]])
+                    }
+                    out_frames.push(out_frame)
+                }
+            }
+        }
+
+        return out_frames
+    }
+}
+
+type Optional<T extends {}> = { [P in keyof T]?: NotAFunction<T[P]> }
+type NotAFunction<T> = T extends Function ? never : T
+
+class ProcessUnion {
+    constructor(
+        options: Optional<ProcessUnion> = {}
+    ) {
+        Object.assign(this, options)
+    }
+    public DefaultValue = ''
     Process(frames: Frame[]): Frame[] {
         let column_names_set = new Set()
         for (let row of frames) {
@@ -142,6 +163,8 @@ async function main(filename: string) {
 
     console.log(`Seaching for frames across ${sheet.rowCount} rows and ${sheet.columnCount} columns`)
 
+    // Find Contiguous Tables within the Sheet
+    // Tables are surrounded by empty cells on all sides.
     let ranges: any[] = []
     for (let j = 0; j < sheet.columnCount; j++) {
         for (let i = 0; i < sheet.rowCount; i++) {
@@ -181,12 +204,10 @@ async function main(filename: string) {
                         continue
                     }
 
-                    // console.log(`Checking ${ti}, ${tj}`)
                     let tcell = sheet.getCell(ti + 1, tj + 1)
                     na.Set(tj, ti, true)
 
                     // if the cell has something, advance to the right and increase the max
-                    // console.log(`Found ${ti}, ${tj} - ${tcell.text}`)
                     if (tcell.text) {
                         row_empty = false
                         tj++
@@ -210,7 +231,7 @@ async function main(filename: string) {
                     }
                 }
 
-                ranges.push({ head: [i, j], tail: [ti, tj] })
+                ranges.push({ head: [i, j], tail: [ti, tj_max] })
             }
         }
     }
@@ -219,46 +240,33 @@ async function main(filename: string) {
     let frames: Frame[] = []
     for (let frame of ranges) {
         let [hi, hj] = frame.head
-        let [ti, _] = frame.tail
+        let [ti, tj] = frame.tail
         let out: any[] = []
         for (let i = hi; i < ti; i++) {
             let key = sheet.getCell(i + 1, hj + 1).text
-            let val = sheet.getCell(i + 1, hj + 2).text
-            out.push([key, val])
+            let vals: any = []
+            for (let j = hj; j < tj - 1; j++) {
+                vals.push(sheet.getCell(i + 1, j + 2).text)
+            }
+            out.push([key, ...vals])
         }
         frames.push(out)
     }
 
-    // Process Frames
+    // Process Columns
+    // We assume the leftmost column is the key, and the rest are values
+    // We create a frame for each set of values
+    frames = new ProcessColumns().Process(frames)
+
+    // We assume the first row is the header, and give that a Title: key
     frames = new ProcessHeader().Process(frames)
+
+    // We unify all the frames to have the same columns in the same order
+    // Empty columns will be the empty string
     frames = new ProcessUnion().Process(frames)
 
     // Format Frames
     console.log(new FormatCsv().Format(frames))
-}
-
-enum CellBorders {
-    Top = 1,
-    Left = 2,
-    Bottom = 4,
-    Right = 8,
-}
-
-function cellHasBorder(cell: Cell): CellBorders {
-    let border = CellBorders.Top | CellBorders.Left | CellBorders.Bottom | CellBorders.Right
-    if (cell.border.top) {
-        border &= ~CellBorders.Top
-    }
-    if (cell.border.left) {
-        border &= ~CellBorders.Left
-    }
-    if (cell.border.bottom) {
-        border &= ~CellBorders.Bottom
-    }
-    if (cell.border.right) {
-        border &= ~CellBorders.Right
-    }
-    return border
 }
 
 main(args[0])
